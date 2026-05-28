@@ -1,9 +1,8 @@
-import threading
 import time
 from hashlib import md5
 from random import random
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout
 from qfluentwidgets import (ScrollArea, TitleLabel, SubtitleLabel, ListWidget, StrongBodyLabel, ComboBox,
                             ToolTipPosition, ToolTipFilter)
@@ -12,7 +11,6 @@ from gui.components import expand
 from gui.util.style_sheet import StyleSheet
 from gui.util.translator import baasTranslator as bt
 
-lock = threading.Lock()
 DISPLAY_CONFIG_PATH = './config/display.json'
 
 
@@ -90,32 +88,42 @@ class ProcessFragment(ScrollArea):
 
         self.baas_thread = None
         self.config = config
-        t_daemon = threading.Thread(target=self.refresh_status, daemon=True)
-        t_daemon.start()
+        self._last_status_text = None
+        self._last_task_list = None
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.setInterval(2000)
+        self.refresh_timer.timeout.connect(self.refresh_status)
+        self.refresh_timer.start()
         self.__initLayout()
+        self.refresh_status()
         self.object_name = md5(f'{time.time()}%{random()}'.encode('utf-8')).hexdigest()
         self.setObjectName(f"{self.object_name}.ProcessFragment")
 
     def refresh_status(self):
-        while True:
-            if self.baas_thread is not None:
-                crt_task = self.baas_thread.scheduler.getCurrentTaskName()
-                task_list = self.baas_thread.scheduler.getWaitingTaskList()
+        if self.baas_thread is None:
+            main_thread = self.config.get_main_thread()
+            self.baas_thread = main_thread.get_baas_thread() if main_thread else None
 
-                crt_task = crt_task if crt_task else self.tr("暂无正在执行的任务")
-                task_list = [bt.tr('ConfigTranslation', task) for task in task_list] if task_list else [
-                    self.tr("暂无队列中的任务")]
-                self.on_status.setText(bt.tr('ConfigTranslation', crt_task))
+        if self.baas_thread is not None:
+            crt_task = self.baas_thread.scheduler.getCurrentTaskName()
+            task_list = self.baas_thread.scheduler.getWaitingTaskList()
 
-                self.listWidget.clear()
-                self.listWidget.addItems(task_list)
-            else:
-                self.on_status.setText(self.tr("暂无正在执行的任务"))
-                self.listWidget.clear()
-                self.listWidget.addItems([self.tr("暂无队列中的任务")])
-                main_thread = self.config.get_main_thread()
-                self.baas_thread = main_thread.get_baas_thread() if main_thread else None
-            time.sleep(2)
+            crt_task = crt_task if crt_task else self.tr("暂无正在执行的任务")
+            task_list = [bt.tr('ConfigTranslation', task) for task in task_list] if task_list else [
+                self.tr("暂无队列中的任务")]
+            status_text = bt.tr('ConfigTranslation', crt_task)
+        else:
+            status_text = self.tr("暂无正在执行的任务")
+            task_list = [self.tr("暂无队列中的任务")]
+
+        if status_text != self._last_status_text:
+            self.on_status.setText(status_text)
+            self._last_status_text = status_text
+
+        if task_list != self._last_task_list:
+            self.listWidget.clear()
+            self.listWidget.addItems(task_list)
+            self._last_task_list = task_list
 
     def __initLayout(self):
         # self.expandLayout.setSpacing(28)
